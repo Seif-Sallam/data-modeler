@@ -178,22 +178,22 @@ table.cols th .col-resize { position:absolute; right:-3px; top:0; bottom:0; widt
 table.cols th .col-resize:hover, table.cols th .col-resize.active { background:rgba(90,200,168,0.4); }
 .table.entity-selected, .note.entity-selected { outline:2px solid #4a9eff; outline-offset:2px; box-shadow:0 0 0 4px rgba(74,158,255,0.2), 0 6px 20px rgba(0,0,0,0.4); }
 .note.collapsed textarea { display:none; }
-.note.collapsed .note-preview { display:block; padding:6px 10px; flex:1; overflow:auto; font-size:11px; opacity:.95; box-sizing:border-box; line-height:1.45; }
-.note .note-preview { display:none; }
-.note-preview p { margin:0 0 4px; }
-.note-preview p:last-child { margin-bottom:0; }
-.note-preview h1, .note-preview h2, .note-preview h3 { margin:4px 0 3px; color:#ffd98a; font-weight:700; }
-.note-preview h1 { font-size:14px; } .note-preview h2 { font-size:13px; } .note-preview h3 { font-size:12px; }
-.note-preview ul, .note-preview ol { margin:2px 0 4px; padding-left:18px; }
-.note-preview li { margin:0 0 1px; }
-.note-preview code { background:rgba(0,0,0,0.3); padding:0 4px; border-radius:3px; font-family:'SF Mono', Menlo, monospace; font-size:10px; color:#ffd98a; }
-.note-preview pre { background:rgba(0,0,0,0.35); padding:6px 8px; border-radius:4px; overflow:auto; margin:3px 0; }
-.note-preview pre code { background:transparent; padding:0; font-size:10.5px; color:#fde4b0; }
-.note-preview a { color:#7dd3fc; text-decoration:underline; }
-.note-preview strong { color:#ffd98a; font-weight:700; }
-.note-preview em { font-style:italic; opacity:.95; }
-.note-preview blockquote { border-left:2px solid rgba(255,255,255,0.3); margin:3px 0; padding:0 0 0 8px; opacity:.85; }
-.note-preview hr { border:none; border-top:1px solid rgba(255,255,255,0.2); margin:4px 0; }
+.note.collapsed .note-preview{ display:block; padding:6px 10px; flex:1; overflow:auto; font-size:11px; opacity:.95; box-sizing:border-box; line-height:1.45; }
+.note .note-preview{ display:none; }
+.md p, .note-preview p { margin:0 0 4px; }
+.md p:last-child, .note-preview p:last-child { margin-bottom:0; }
+.md h1, .md h2, .md h3, .note-preview h1, .note-preview h2, .note-preview h3 { margin:4px 0 3px; color:#ffd98a; font-weight:700; }
+.md h1, .note-preview h1 { font-size:14px; } .md h2, .note-preview h2 { font-size:13px; } .md h3, .note-preview h3 { font-size:12px; }
+.md ul, .md ol, .note-preview ul, .note-preview ol { margin:2px 0 4px; padding-left:18px; }
+.md li, .note-preview li { margin:0 0 1px; }
+.md code, .note-preview code { background:rgba(0,0,0,0.3); padding:0 4px; border-radius:3px; font-family:'SF Mono', Menlo, monospace; font-size:10px; color:#ffd98a; }
+.md pre, .note-preview pre { background:rgba(0,0,0,0.35); padding:6px 8px; border-radius:4px; overflow:auto; margin:3px 0; }
+.md pre code, .note-preview pre code { background:transparent; padding:0; font-size:10.5px; color:#fde4b0; }
+.md a, .note-preview a { color:#7dd3fc; text-decoration:underline; }
+.md strong, .note-preview strong { color:#ffd98a; font-weight:700; }
+.md em, .note-preview em { font-style:italic; opacity:.95; }
+.md blockquote, .note-preview blockquote { border-left:2px solid rgba(255,255,255,0.3); margin:3px 0; padding:0 0 0 8px; opacity:.85; }
+.md hr, .note-preview hr { border:none; border-top:1px solid rgba(255,255,255,0.2); margin:4px 0; }
 .cmt-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; font-size:12px; }
 .cmt-btn.has { color:#e8b75a; }
 .cmt-btn:hover { color:var(--text); }
@@ -849,7 +849,7 @@ function renderTable(t){
     hd.appendChild(pn);
     bub.appendChild(hd);
     const body = document.createElement('div'); body.className='note-body';
-    const tx = document.createElement('span'); tx.className='note-text'; tx.textContent=t.comment; body.appendChild(tx);
+    const tx = document.createElement('span'); tx.className='note-text md'; tx.innerHTML = mdToHtml(t.comment); body.appendChild(tx);
     bub.appendChild(body);
     el.appendChild(bub);
   }
@@ -1047,9 +1047,24 @@ function renderTable(t){
     sdIn.addEventListener('keydown',(e)=>handleShiftEnter(e,i));
     tr.appendChild(td(sdIn));
     const act = document.createElement('td'); act.className='actions';
-    const ccb = document.createElement('button'); ccb.className='cnote-btn'+(c.comment?' has':''); ccb.textContent='💬'; ccb.title = c.comment ? 'Edit comment: '+c.comment : 'Add a comment';
-    if(c.comment) ccb.style.color='#e8b75a';
-    ccb.addEventListener('click',(e)=>{ e.stopPropagation(); openPopover(ccb, 'Comment on '+(c.name||'column'), ()=>c.comment, v=>{ c.comment=v; if(!v) c.comment_pinned=false; }); });
+    const ccb = document.createElement('button'); ccb.className='cnote-btn'+(c.comment?' has':'')+(c.comment_pinned?' pinned':''); ccb.textContent='💬';
+    ccb.title = c.comment ? (c.comment_pinned?'Pinned — click to unpin, double-click to edit':'Has comment — click to pin, double-click to edit')+': '+c.comment : 'Add a comment';
+    if(c.comment) ccb.style.color = c.comment_pinned ? '#e8b75a' : '#c8a06a';
+    ccb.addEventListener('click',(e)=>{
+      e.stopPropagation();
+      if(!c.comment){ openPopover(ccb, 'Comment on '+(c.name||'column'), ()=>c.comment, v=>{ c.comment=v; if(!v) c.comment_pinned=false; }); return; }
+      if(ccb._clickT){ clearTimeout(ccb._clickT); ccb._clickT = null; return; }
+      ccb._clickT = setTimeout(()=>{
+        ccb._clickT = null;
+        c.comment_pinned = !c.comment_pinned;
+        markDirty(); renderCanvas();
+      }, 260);
+    });
+    ccb.addEventListener('dblclick',(e)=>{
+      e.stopPropagation();
+      if(ccb._clickT){ clearTimeout(ccb._clickT); ccb._clickT = null; }
+      openPopover(ccb, 'Comment on '+(c.name||'column'), ()=>c.comment, v=>{ c.comment=v; if(!v) c.comment_pinned=false; });
+    });
     act.appendChild(ccb);
     const lk = document.createElement('button'); lk.textContent='🔗'; lk.title='Link this column to another column (click here, then click 🔗 on the target)';
     lk.onclick=()=>{
@@ -1173,7 +1188,7 @@ function buildColNotesStack(t, el){
     chd.appendChild(cpn);
     cbub.appendChild(chd);
     const cbody = document.createElement('div'); cbody.className='note-body';
-    const ctx = document.createElement('span'); ctx.className='note-text'; ctx.textContent=c.comment; cbody.appendChild(ctx);
+    const ctx = document.createElement('span'); ctx.className='note-text md'; ctx.innerHTML = mdToHtml(c.comment); cbody.appendChild(ctx);
     cbub.appendChild(cbody);
     stack.appendChild(cbub);
 
