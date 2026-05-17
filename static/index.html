@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <title>📐 Data Modeler</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%90%3C/text%3E%3C/svg%3E" />
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
 * { box-sizing: border-box; }
 :root, body.dark { --bg:#16161a; --bg-2:#1e1e24; --bg-3:#262630; --bg-4:#33333e; --border:#3a3a45; --text:#e6e6ec; --text-dim:#9696a4; --accent:#5ac8a8; --warn:#e88; --primary:#4a9eff; --row-hover:rgba(255,255,255,0.04); --dot:#2a2a36; --header-grad-1:#2c2c34; --header-grad-2:#232329; --table-grad-1:#2e2e38; --table-grad-2:#262630; --tbl-head-grad-1:#404050; --tbl-head-grad-2:#353542; --tbl-section-bg:#22222a; --tbl-th-bg:#1f1f27; --tbl-border-inner:#1a1a22; }
@@ -285,6 +286,7 @@ table.cols th .col-resize:hover, table.cols th .col-resize.active { background:r
     <button id="organizeBtn" title="Auto-arrange all tables in a grid">⊞ Organize</button>
     <button id="linksBtn" title="View, hide, or delete links">🔗 Links</button>
     <button id="hideAllLinksBtn" title="Hide / show all links in this tab">👁 Hide All</button>
+    <button id="snapBtn" title="Download a high-resolution PNG screenshot of the canvas">📸 Snapshot</button>
     <button id="fitBtn" title="Reset zoom and pan">Reset</button>
     <span id="zoom">100%</span>
   </div>
@@ -324,6 +326,22 @@ let state = null; // current draft
 let currentDraftName = null;
 let currentTabId = null;
 let zoom = 1, panX=0, panY=0;
+function saveView(){
+  const tab = currentTab(); if(!tab) return;
+  tab.view = { panX, panY, zoom };
+  markDirty();
+}
+function restoreView(){
+  const tab = currentTab();
+  const v = tab && tab.view;
+  if(v){ panX = v.panX||0; panY = v.panY||0; zoom = v.zoom||1; }
+  else { panX = 0; panY = 0; zoom = 1; }
+  const cv = document.getElementById('canvas');
+  const ls = document.getElementById('linkSvg');
+  if(cv) cv.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  if(ls) ls.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`;
+  const z = document.getElementById('zoom'); if(z) z.textContent = Math.round(zoom*100)+'%';
+}
 const selection = new Set(); // keys like 'table:ID' or 'note:ID'
 let selectionSticky = false; // true after Ctrl+A; cleared on next mousedown release
 function selKey(type,id){ return type+':'+id; }
@@ -542,6 +560,7 @@ async function loadDraft(name){
   else state = await r.json();
   normalize(state);
   currentTabId = state.tabs[0].id;
+  _lastRenderedTabId = null;
   dirty=false;
   history = { past: [], future: [], baseline: clone(state) };
   sessionBaseline = clone(state);
@@ -574,7 +593,12 @@ async function saveDraft(){
 
 function currentTab(){ return state.tabs.find(t=>t.id===currentTabId); }
 
+let _lastRenderedTabId = null;
 function render(){
+  if(currentTabId !== _lastRenderedTabId){
+    restoreView();
+    _lastRenderedTabId = currentTabId;
+  }
   renderTabs();
   renderCanvas();
 }
@@ -1225,7 +1249,7 @@ window.addEventListener('mousemove',(e)=>{
   $('#linkSvg').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   updateCoords();
 });
-window.addEventListener('mouseup',()=>{ panning=null; });
+window.addEventListener('mouseup',()=>{ if(panning){ panning=null; saveView(); } });
 function updateCoords(){
   const x = Math.round(-panX / zoom);
   const y = Math.round(-panY / zoom);
@@ -1239,7 +1263,7 @@ cw.addEventListener('wheel',(e)=>{
   $('#canvas').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   $('#linkSvg').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   $('#zoom').textContent=Math.round(zoom*100)+'%';
-  renderLinks(); updateCoords();
+  renderLinks(); updateCoords(); saveView();
 },{passive:false});
 
 // toolbar wiring
@@ -1283,7 +1307,7 @@ $('#newNote').onclick = ()=>{
   tab.notes.push({ id:uid(), x, y, text:'', collapsed:false });
   markDirty(); renderCanvas();
 };
-$('#fitBtn').onclick = ()=>{ panX=0; panY=0; zoom=1; renderCanvas(); };
+$('#fitBtn').onclick = ()=>{ panX=0; panY=0; zoom=1; renderCanvas(); saveView(); };
 $('#hideAllLinksBtn').onclick = ()=>{
   const tab=currentTab(); if(!tab||!tab.links) return;
   const anyVisible = tab.links.some(l=>!l.hidden);
@@ -1347,6 +1371,118 @@ $('#organizeBtn').onclick = ()=>{
   });
   markDirty(); renderCanvas();
 };
+
+$('#snapBtn').onclick = ()=>snapshotCanvas();
+async function snapshotCanvas(){
+  if(typeof html2canvas !== 'function'){
+    setStatus('snapshot library not loaded — check your connection');
+    return;
+  }
+  const tab = currentTab(); if(!tab) return;
+  const elems = Array.from(document.querySelectorAll('#canvas > .table, #canvas > .note'));
+  if(!elems.length){ setStatus('nothing to snapshot'); return; }
+  setStatus('rendering snapshot…');
+
+  // Compute bbox in canvas-coords (incl. overflowing comment bubbles)
+  const wrap = document.getElementById('canvasWrap');
+  const wrapRect = wrap.getBoundingClientRect();
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+  elems.forEach(el=>{
+    let bx1=Infinity, by1=Infinity, bx2=-Infinity, by2=-Infinity;
+    const r = el.getBoundingClientRect();
+    bx1=r.left; by1=r.top; bx2=r.right; by2=r.bottom;
+    el.querySelectorAll('.note-bubble, .col-notes-stack, .col-notes-stack > *').forEach(child=>{
+      const cr = child.getBoundingClientRect();
+      if(cr.width===0 && cr.height===0) return;
+      if(cr.left<bx1) bx1=cr.left; if(cr.top<by1) by1=cr.top;
+      if(cr.right>bx2) bx2=cr.right; if(cr.bottom>by2) by2=cr.bottom;
+    });
+    const ox = (bx1 - wrapRect.left - panX)/zoom;
+    const oy = (by1 - wrapRect.top  - panY)/zoom;
+    const ow = (bx2-bx1)/zoom, oh = (by2-by1)/zoom;
+    minX=Math.min(minX,ox); minY=Math.min(minY,oy);
+    maxX=Math.max(maxX,ox+ow); maxY=Math.max(maxY,oy+oh);
+  });
+  const pad = 60;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const W = Math.max(1, maxX-minX), H = Math.max(1, maxY-minY);
+
+  // Build an offscreen, on-page container that mirrors canvas content at zoom=1,
+  // so html2canvas captures everything cleanly without the canvas pan/scale transform.
+  const stage = document.createElement('div');
+  stage.style.cssText = `position:fixed; left:-99999px; top:0; width:${W}px; height:${H}px; background:${getComputedStyle(document.body).backgroundColor||'#16161a'}; pointer-events:none; overflow:hidden;`;
+  stage.className = 'snapshot-stage';
+
+  // Clone the link SVG into the stage, shifted by -minX,-minY
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const linkSvg = document.getElementById('linkSvg');
+  const svgClone = document.createElementNS(SVGNS,'svg');
+  svgClone.setAttribute('width', W); svgClone.setAttribute('height', H);
+  svgClone.style.cssText = `position:absolute; left:0; top:0; pointer-events:none; overflow:visible;`;
+  const linkG = document.createElementNS(SVGNS,'g');
+  linkG.setAttribute('transform', `translate(${-minX},${-minY})`);
+  Array.from(linkSvg.children).forEach(child=>{
+    if(child.tagName==='line' && child.getAttribute('stroke') && child.getAttribute('stroke').startsWith('rgba(180')) return;
+    const clone = child.cloneNode(true);
+    if(clone.querySelectorAll){
+      clone.querySelectorAll('.lx, .lhit').forEach(n=>n.remove());
+      clone.querySelectorAll('.lvis').forEach(line=>{
+        line.setAttribute('stroke','#5ac8a8');
+        line.setAttribute('stroke-width','2.5');
+        line.setAttribute('opacity','0.85');
+      });
+    }
+    linkG.appendChild(clone);
+  });
+  svgClone.appendChild(linkG);
+  stage.appendChild(svgClone);
+
+  // Clone every entity DOM and reposition into the stage's coordinate space
+  elems.forEach(el=>{
+    const r = el.getBoundingClientRect();
+    const ox = (r.left - wrapRect.left - panX)/zoom - minX;
+    const oy = (r.top  - wrapRect.top  - panY)/zoom - minY;
+    const clone = el.cloneNode(true);
+    clone.style.left = ox+'px';
+    clone.style.top = oy+'px';
+    clone.style.width = (r.width/zoom)+'px';
+    clone.style.transform = 'none';
+    clone.querySelectorAll('.resize-handle, .col-resize').forEach(n=>n.remove());
+    clone.querySelectorAll('button').forEach(b=>{
+      const t = (b.textContent||'').trim();
+      if(/^(✕|🗑|❏|▬|▣|🔗|💬|✎|📌|⚠ confirm)$/.test(t)) b.remove();
+    });
+    stage.appendChild(clone);
+  });
+
+  document.body.appendChild(stage);
+  try {
+    const result = await html2canvas(stage, {
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#16161a',
+      scale: 3,
+      logging: false,
+      useCORS: true,
+      width: W, height: H,
+      windowWidth: W, windowHeight: H,
+    });
+    const tabName = (tab.name||'tab').replace(/[^\w-]+/g,'_');
+    const fname = `${currentDraftName||'draft'}-${tabName}.png`;
+    result.toBlob((b)=>{
+      if(!b){ setStatus('snapshot failed'); return; }
+      const a = document.createElement('a');
+      const dl = URL.createObjectURL(b);
+      a.href = dl; a.download = fname; a.click();
+      setTimeout(()=>URL.revokeObjectURL(dl), 1000);
+      setStatus('snapshot saved');
+    }, 'image/png');
+  } catch(err){
+    console.error('snapshot failed', err);
+    setStatus('snapshot failed — see console');
+  } finally {
+    stage.remove();
+  }
+}
+
 
 async function exportPy(allTabs){
   if(dirty) await saveDraft();
@@ -1619,7 +1755,7 @@ window.addEventListener('keydown',(e)=>{
     $('#canvas').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
     $('#linkSvg').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
     $('#zoom').textContent = Math.round(zoom*100)+'%';
-    renderLinks();
+    renderLinks(); saveView();
   }
   else if((e.metaKey||e.ctrlKey) && (e.key==='-'||e.key==='_')){
     e.preventDefault();
@@ -1627,12 +1763,12 @@ window.addEventListener('keydown',(e)=>{
     $('#canvas').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
     $('#linkSvg').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
     $('#zoom').textContent = Math.round(zoom*100)+'%';
-    renderLinks();
+    renderLinks(); saveView();
   }
   else if((e.metaKey||e.ctrlKey) && e.key==='0'){
     e.preventDefault();
     zoom = 1; panX = 0; panY = 0;
-    renderCanvas();
+    renderCanvas(); saveView();
   }
   else if((e.metaKey||e.ctrlKey) && (e.key==='a'||e.key==='A')){
     const ae = document.activeElement;
