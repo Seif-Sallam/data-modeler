@@ -387,10 +387,8 @@ def render_markdown(data, tab_id=None):
             out.append(f"### {cls} — `{tn}`")
             if tbl.get("comment"):
                 out.append("")
-                lines = str(tbl["comment"]).split("\n")
-                for i, ln in enumerate(lines):
-                    suffix = " \\" if i < len(lines) - 1 else ""
-                    out.append(f"> {ln}{suffix}")
+                for ln in str(tbl["comment"]).split("\n"):
+                    out.append(f"> {ln}")
             out.append("")
             out.append("| Column | Type | PK | Null | Unique | Idx | Default | Comment |")
             out.append("|--------|------|----|------|--------|-----|---------|---------|")
@@ -433,10 +431,8 @@ def render_markdown(data, tab_id=None):
                 out.append(f"#### {title}")
                 txt = (n.get("text") or "").strip()
                 if txt:
-                    lines = txt.split("\n")
-                    for i, ln in enumerate(lines):
-                        suffix = " \\" if i < len(lines) - 1 else ""
-                        out.append(f"> {ln}{suffix}")
+                    for ln in txt.split("\n"):
+                        out.append(f"> {ln}")
                 else:
                     out.append("> _(empty)_")
                 out.append("")
@@ -461,4 +457,4 @@ def api_parse():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5151, debug=False)
+    app.run(host="0.0.0.0", port=8001, debug=False)

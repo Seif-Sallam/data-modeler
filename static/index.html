@@ -195,6 +195,9 @@ table.cols th .col-resize:hover, table.cols th .col-resize.active { background:r
 .md em, .note-preview em { font-style:italic; opacity:.95; }
 .md blockquote, .note-preview blockquote { border-left:2px solid rgba(255,255,255,0.3); margin:3px 0; padding:0 0 0 8px; opacity:.85; }
 .md hr, .note-preview hr { border:none; border-top:1px solid rgba(255,255,255,0.2); margin:4px 0; }
+.md table, .note-preview table { border-collapse:collapse; margin:4px 0; font-size:11px; }
+.md th, .md td, .note-preview th, .note-preview td { border:1px solid rgba(255,255,255,0.18); padding:2px 6px; }
+.md th, .note-preview th { background:rgba(255,255,255,0.06); color:#ffd98a; font-weight:600; text-align:left; }
 .cmt-btn { background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:2px 4px; font-size:12px; }
 .cmt-btn.has { color:#e8b75a; }
 .cmt-btn:hover { color:var(--text); }
@@ -329,7 +332,6 @@ let zoom = 1, panX=0, panY=0;
 function saveView(){
   const tab = currentTab(); if(!tab) return;
   tab.view = { panX, panY, zoom };
-  markDirty();
 }
 function restoreView(){
   const tab = currentTab();
@@ -455,6 +457,30 @@ function mdToHtml(src){
       continue;
     }
     if(/^\s*$/.test(ln)){ i++; continue; }
+    // GFM pipe table: header row + separator row + body rows
+    if(/\|/.test(ln) && i+1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i+1])){
+      const splitRow = (r)=>{
+        let s = r.trim();
+        if(s.startsWith('|')) s = s.slice(1);
+        if(s.endsWith('|')) s = s.slice(0,-1);
+        return s.split('|').map(c=>c.trim());
+      };
+      const aligns = splitRow(lines[i+1]).map(seg=>{
+        const L = seg.startsWith(':'), R = seg.endsWith(':');
+        return L && R ? 'center' : R ? 'right' : L ? 'left' : '';
+      });
+      const header = splitRow(ln);
+      i += 2;
+      const rows = [];
+      while(i < lines.length && /\|/.test(lines[i]) && lines[i].trim()){
+        rows.push(splitRow(lines[i])); i++;
+      }
+      const styleFor = (k)=> aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
+      const thead = '<thead><tr>'+header.map((c,k)=>'<th'+styleFor(k)+'>'+inline(c)+'</th>').join('')+'</tr></thead>';
+      const tbody = '<tbody>'+rows.map(r=>'<tr>'+r.map((c,k)=>'<td'+styleFor(k)+'>'+inline(c)+'</td>').join('')+'</tr>').join('')+'</tbody>';
+      out.push('<table>'+thead+tbody+'</table>');
+      continue;
+    }
     // paragraph (collect contiguous non-special lines)
     const buf = [];
     while(i < lines.length && lines[i].trim() && !/^(#{1,3}\s|>\s?|[-*]\s|\d+\.\s|```|---+\s*$)/.test(lines[i])){
@@ -1259,7 +1285,15 @@ cw.addEventListener('wheel',(e)=>{
   if(!e.ctrlKey && !e.metaKey) return;
   e.preventDefault();
   const d = e.deltaY < 0 ? 1.1 : 0.9;
-  zoom = Math.min(2, Math.max(0.3, zoom*d));
+  const newZoom = Math.min(2, Math.max(0.3, zoom*d));
+  if(newZoom !== zoom){
+    const r = cw.getBoundingClientRect();
+    const cx = e.clientX - r.left, cy = e.clientY - r.top;
+    const wx = (cx - panX) / zoom, wy = (cy - panY) / zoom;
+    zoom = newZoom;
+    panX = cx - wx * zoom;
+    panY = cy - wy * zoom;
+  }
   $('#canvas').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   $('#linkSvg').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
   $('#zoom').textContent=Math.round(zoom*100)+'%';
