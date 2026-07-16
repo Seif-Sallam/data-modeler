@@ -1,0 +1,9 @@
+# User-produced schema data — never commit these.
+# Both folders are recreated automatically at startup (see app.py).
+drafts/
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
