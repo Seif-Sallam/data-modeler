@@ -7,11 +7,40 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory, abort
 
 ROOT = Path(__file__).parent
-DRAFTS = ROOT / "drafts"
-BACKUPS = ROOT / "backups"
 STATIC = ROOT / "static"
-DRAFTS.mkdir(exist_ok=True)
-BACKUPS.mkdir(exist_ok=True)
+
+CONFIG_PATH = Path.home() / ".data-modeler" / "config.json"
+DEFAULT_STORAGE = Path.home() / "Downloads" / "DataModeler"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, indent=2))
+
+
+def storage_dir() -> Path:
+    raw = load_config().get("storage_dir")
+    return Path(raw).expanduser() if raw else DEFAULT_STORAGE
+
+
+def drafts_dir() -> Path:
+    d = storage_dir() / "drafts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def backups_dir() -> Path:
+    d = storage_dir() / "backups"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 
 app = Flask(__name__, static_folder=str(STATIC), static_url_path="")
 
@@ -22,7 +51,7 @@ def slugify(name: str) -> str:
 
 
 def draft_path(name: str) -> Path:
-    return DRAFTS / f"{slugify(name)}.json"
+    return drafts_dir() / f"{slugify(name)}.json"
 
 
 @app.route("/")
@@ -33,7 +62,7 @@ def index():
 @app.route("/api/drafts", methods=["GET"])
 def list_drafts():
     out = []
-    for p in sorted(DRAFTS.glob("*.json")):
+    for p in sorted(drafts_dir().glob("*.json")):
         try:
             st = p.stat()
             out.append({
@@ -61,7 +90,7 @@ def save_draft(name):
     if p.exists():
         # backup previous
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shutil.copy2(p, BACKUPS / f"{p.stem}__{ts}.json")
+        shutil.copy2(p, backups_dir() / f"{p.stem}__{ts}.json")
     p.write_text(json.dumps(data, indent=2))
     return jsonify({"ok": True, "name": p.stem})
 
@@ -71,7 +100,7 @@ def delete_draft(name):
     p = draft_path(name)
     if p.exists():
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shutil.move(str(p), str(BACKUPS / f"{p.stem}__deleted_{ts}.json"))
+        shutil.move(str(p), str(backups_dir() / f"{p.stem}__deleted_{ts}.json"))
     return jsonify({"ok": True})
 
 
@@ -80,7 +109,7 @@ def duplicate_draft():
     body = request.get_json()
     src = draft_path(body["source"])
     dst_name = slugify(body["target"])
-    dst = DRAFTS / f"{dst_name}.json"
+    dst = drafts_dir() / f"{dst_name}.json"
     if not src.exists():
         abort(404)
     if dst.exists():
@@ -96,7 +125,7 @@ def rename_draft():
     body = request.get_json()
     src = draft_path(body["source"])
     dst_name = slugify(body["target"])
-    dst = DRAFTS / f"{dst_name}.json"
+    dst = drafts_dir() / f"{dst_name}.json"
     if not src.exists():
         abort(404)
     if dst.exists():
@@ -106,6 +135,37 @@ def rename_draft():
     dst.write_text(json.dumps(data, indent=2))
     src.unlink()
     return jsonify({"ok": True, "name": dst_name})
+
+
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    return jsonify({
+        "storage_dir": str(storage_dir()),
+        "drafts_dir": str(storage_dir() / "drafts"),
+        "backups_dir": str(storage_dir() / "backups"),
+        "default_dir": str(DEFAULT_STORAGE),
+        "is_default": not load_config().get("storage_dir"),
+    })
+
+
+@app.route("/api/settings", methods=["PUT"])
+def update_settings():
+    body = request.get_json() or {}
+    raw = (body.get("storage_dir") or "").strip()
+    cfg = load_config()
+    if not raw:
+        cfg.pop("storage_dir", None)
+        save_config(cfg)
+        return jsonify({"ok": True, "storage_dir": str(DEFAULT_STORAGE), "is_default": True})
+    target = Path(raw).expanduser()
+    try:
+        (target / "drafts").mkdir(parents=True, exist_ok=True)
+        (target / "backups").mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Cannot use '{target}': {e}"}), 400
+    cfg["storage_dir"] = str(target)
+    save_config(cfg)
+    return jsonify({"ok": True, "storage_dir": str(target), "is_default": False})
 
 
 # ---- Python export ----

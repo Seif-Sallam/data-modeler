@@ -270,6 +270,8 @@ table.cols th .col-resize:hover, table.cols th .col-resize.active { background:r
     </div>
     <input id="fileInput" type="file" accept=".json" style="display:none" />
   </div>
+  <div class="sep"></div>
+  <button id="settingsBtn" title="Choose where drafts and backups are saved">⚙ Settings</button>
   <span class="spacer"></span>
   <span id="status"></span>
 </div>
@@ -1329,6 +1331,39 @@ $('#delDraft').onclick = async ()=>{
   if(!confirm('Delete '+currentDraftName+' ? (backed up)')) return;
   await fetch('/api/drafts/'+encodeURIComponent(currentDraftName),{method:'DELETE'});
   currentDraftName=null; state=null; await loadDraftList();
+};
+$('#settingsBtn').onclick = async ()=>{
+  let s;
+  try { s = await (await fetch('/api/settings')).json(); }
+  catch(e){ return alert('Could not load settings'); }
+  const esc = (v)=>escHtml(String(v));
+  const render = (cur)=>{
+    $('#modalBody').innerHTML =
+      '<h3 style="margin:0 0 4px">⚙ Storage location</h3>'
+      +'<p style="color:var(--text-dim);margin:0 0 12px;font-size:12px">Where your drafts and their backups are saved on this machine. '
+      +'Enter an absolute folder path — <code>drafts/</code> and <code>backups/</code> subfolders are created inside it.</p>'
+      +'<label style="display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px">Storage folder</label>'
+      +'<input id="setPath" type="text" style="width:100%;box-sizing:border-box;padding:8px;font-family:SF Mono,Menlo,monospace;font-size:12px" '
+      +'value="'+esc(cur.storage_dir)+'" placeholder="'+esc(cur.default_dir)+'" />'
+      +'<div style="margin-top:6px;font-size:11px;color:var(--text-dim)">'
+      +'Drafts → <code>'+esc(cur.drafts_dir)+'</code><br>Backups → <code>'+esc(cur.backups_dir)+'</code>'
+      +(cur.is_default ? ' <em>(default)</em>' : '')+'</div>'
+      +'<div style="margin-top:10px"><button id="setReset">↺ Reset to default (Downloads)</button></div>'
+      +'<div id="setErr" style="color:#c33;font-size:12px;margin-top:8px"></div>';
+    openModal({primaryLabel:'Save location', primaryTitle:'Save the storage folder', showCopy:false});
+    $('#setPath').focus();
+    $('#setReset').onclick = ()=>{ $('#setPath').value=''; };
+    $('#primaryBtn').onclick = async ()=>{
+      const r = await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({storage_dir:$('#setPath').value.trim()})});
+      const j = await r.json();
+      if(!j.ok){ $('#setErr').textContent = j.error || 'Could not set that folder'; return; }
+      $('#modal').style.display='none';
+      setStatus('Storage: '+j.storage_dir);
+      await loadDraftList();
+    };
+  };
+  render(s);
 };
 $('#saveBtn').onclick = saveDraft;
 $('#undoBtn').onclick = undo;

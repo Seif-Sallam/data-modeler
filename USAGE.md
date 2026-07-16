@@ -15,14 +15,15 @@ Everything runs on your own machine. Your work is saved as plain JSON files you 
 ./run.sh
 ```
 
-Then open **http://127.0.0.1:5050** in your browser.
+Then open **http://127.0.0.1:8001** in your browser.
 
 That's it — no build step, no database, no accounts. The only requirements are Python 3.10+
 and [`uv`](https://docs.astral.sh/uv/). The app pulls in Flask automatically.
 
-Your designs are stored as JSON files in the `drafts/` folder. Every time you save, the
-previous version is copied into `backups/` with a timestamp, so you can never lose work by
-overwriting.
+Your designs are stored as JSON files in a `drafts/` folder, and every time you save, the
+previous version is copied into a `backups/` folder with a timestamp — so you can never lose
+work by overwriting. By default these live in **`~/Downloads/DataModeler/`**, and you can
+change the location at any time (see [Choosing where files are saved](#choosing-where-files-are-saved)).
 
 ---
 
@@ -161,6 +162,20 @@ presentations.
 
 From the toolbar you can **switch** between drafts, create a **new** one, **rename**,
 **duplicate**, or **delete** (a timestamped backup is always kept in `backups/`).
+
+## Choosing where files are saved
+
+Click **⚙ Settings** in the toolbar to choose the folder where your drafts and backups live.
+
+- The default is **`~/Downloads/DataModeler/`**, created automatically on first run.
+- Enter any absolute folder path — the app creates `drafts/` and `backups/` subfolders inside
+  it. Point it at a synced folder (Dropbox, iCloud Drive, a Git repo…) to back up or share your
+  designs however you like.
+- Leave the field empty and save to reset back to the default.
+
+Your choice is remembered between sessions (stored in `~/.data-modeler/config.json`). Changing
+the location doesn't move existing files — switch back to the old folder anytime, or copy your
+`.json` files across.
 
 ---
 
