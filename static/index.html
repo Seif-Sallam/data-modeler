@@ -289,6 +289,7 @@ table.cols th .col-resize:hover, table.cols th .col-resize.active { background:r
   <div id="coords">x: 0, y: 0</div>
   <div id="viewControls">
     <button id="organizeBtn" title="Auto-arrange all tables in a grid">⊞ Organize</button>
+    <button id="minAllBtn" title="Minimize / expand all tables in this tab">▬ Minimize All</button>
     <button id="linksBtn" title="View, hide, or delete links">🔗 Links</button>
     <button id="hideAllLinksBtn" title="Hide / show all links in this tab">👁 Hide All</button>
     <button id="snapBtn" title="Download a high-resolution PNG screenshot of the canvas">📸 Snapshot</button>
@@ -1419,6 +1420,13 @@ $('#linksBtn').onclick = ()=>{
     document.querySelectorAll('.lpDel').forEach(b=>b.onclick=()=>{ const i=+b.dataset.i; tab.links.splice(i,1); markDirty(); renderLinks(); renderList(); });
   };
   renderList();
+};
+$('#minAllBtn').onclick = ()=>{
+  const tab = currentTab(); if(!tab||!tab.tables.length) return;
+  const collapse = tab.tables.some(t=>!t.collapsed);
+  tab.tables.forEach(t=>t.collapsed = collapse);
+  $('#minAllBtn').textContent = collapse ? '▣ Expand All' : '▬ Minimize All';
+  markDirty(); renderCanvas();
 };
 $('#organizeBtn').onclick = ()=>{
   const tab = currentTab(); if(!tab) return;
