@@ -32,7 +32,10 @@ LAYOUT_GUIDE = (
     "just the ~40px header. To avoid overlap, space tables ~340px apart "
     "horizontally and leave a >=40px vertical gap below the tallest neighbour. "
     "Use get_draft to read current x/y/w/collapsed, compute positions from the "
-    "sizes above, then set_table_layout to place or minimize tables."
+    "sizes above, then set_table_layout to place or minimize tables. "
+    "All comment/note text (table comments, column comments, sticky notes) is "
+    "rendered as Markdown, so you can use headings, bold/italic, code, lists, "
+    "tables and links to write rich documentation."
 )
 
 mcp = FastMCP("data-modeler", instructions=LAYOUT_GUIDE)
@@ -215,7 +218,7 @@ def add_table(
             column types: BIGINT, INT, SMALLINT, TINYINT, String(N), TEXT,
             DATETIME, DATE, TIMESTAMP, BOOLEAN, JSON, DECIMAL(p,s), CCY.
         tab: target tab id or name (defaults to the first tab).
-        comment: optional Markdown table comment.
+        comment: optional table comment (rendered as Markdown).
         constraints: list of {kind: "unique"|"index", name, columns: [col_name,...]}.
         x, y: optional canvas position (auto-arranged in a grid if omitted).
 
@@ -255,7 +258,8 @@ def add_column(draft: str, table: str, column: dict, tab: Optional[str] = None) 
 
     `column` is a spec dict (same shape as add_table's column entries: name,
     type, and optional primary_key/nullable/unique/index/server_default/
-    no_autoincrement/comment). `table` is a table id or table_name.
+    no_autoincrement/comment). The comment is rendered as Markdown. `table` is a
+    table id or table_name.
     """
     data = _get_draft(draft)
     tbl = _find_table(_find_tab(data, tab), table)
@@ -407,10 +411,12 @@ def set_comment(
     pinned: bool = False,
     tab: Optional[str] = None,
 ) -> dict:
-    """Set a Markdown comment on a table, or on one of its columns.
+    """Set a comment on a table, or on one of its columns.
 
     Provide `column` (id or name) to comment on a column; omit it to comment on
-    the table itself. `pinned` keeps the comment visible on the canvas.
+    the table itself. `pinned` keeps the comment visible on the canvas. Comment
+    text is rendered as Markdown (headings, bold/italic, `code`, fenced blocks,
+    lists, tables, links), so you can write rich documentation.
     """
     data = _get_draft(draft)
     tbl = _find_table(_find_tab(data, tab), table)
@@ -429,7 +435,11 @@ def add_note(
     x: Optional[int] = None,
     y: Optional[int] = None,
 ) -> dict:
-    """Drop a free-floating Markdown sticky note on a tab's canvas."""
+    """Drop a free-floating sticky note on a tab's canvas.
+
+    `text` is rendered as Markdown (headings, bold/italic, code, lists, tables,
+    links), so notes can hold rich planning documentation.
+    """
     data = _get_draft(draft)
     t = _find_tab(data, tab)
     note = {"id": uid(), "x": x if x is not None else 80, "y": y if y is not None else 80,
