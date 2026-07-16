@@ -126,6 +126,9 @@ datalist { display:none; }
 #viewControls { position:absolute; bottom:14px; right:14px; display:flex; gap:6px; align-items:center; background:var(--bg-2); padding:6px 8px; border-radius:8px; border:1px solid var(--border); box-shadow:0 4px 12px rgba(0,0,0,0.2); }
 #viewControls button { background:transparent; border:1px solid var(--border); color:var(--text-dim); padding:4px 10px; border-radius:5px; cursor:pointer; font-size:11px; }
 #viewControls button:hover { background:var(--bg-3); color:var(--text); }
+#conflictBar { position:absolute; top:14px; left:50%; transform:translateX(-50%); z-index:60; display:none; align-items:center; gap:10px; max-width:80%; background:linear-gradient(to bottom, #8a3535, #6f2a2a); color:#fff; border:1px solid #d97706; border-radius:8px; padding:8px 12px; box-shadow:0 6px 20px rgba(0,0,0,0.45); font-size:12px; line-height:1.4; }
+#conflictBar button { background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.45); color:#fff; padding:3px 10px; border-radius:5px; cursor:pointer; font-size:11px; white-space:nowrap; }
+#conflictBar button:hover { background:rgba(255,255,255,0.28); }
 #zoom { color:var(--text-dim); font-size:11px; padding:0 6px; min-width:42px; text-align:center; font-variant-numeric:tabular-nums; }
 #modal { position:fixed; inset:0; background:rgba(0,0,0,.5); display:none; align-items:center; justify-content:center; z-index:100; }
 #modal .box { background:var(--bg-2); padding:20px; border-radius:10px; max-width:80%; max-height:80%; overflow:auto; min-width:520px; border:1px solid var(--border); box-shadow:0 10px 40px rgba(0,0,0,0.4); color:var(--text); }
@@ -287,6 +290,12 @@ table.cols th .col-resize:hover, table.cols th .col-resize.active { background:r
   <svg id="linkSvg"></svg>
   <div id="canvas"></div>
   <div id="coords">x: 0, y: 0</div>
+  <div id="conflictBar">
+    <span id="conflictMsg"></span>
+    <button id="conflictReload" title="Discard local changes and load the on-disk version">↻ Reload</button>
+    <button id="conflictOverwrite" title="Overwrite the on-disk version with what you have here">Save (overwrite)</button>
+    <button id="conflictDismiss" title="Hide this until the next change">Dismiss</button>
+  </div>
   <div id="viewControls">
     <button id="organizeBtn" title="Auto-arrange all tables in a grid">⊞ Organize</button>
     <button id="minAllBtn" title="Minimize / expand all tables in this tab">▬ Minimize All</button>
@@ -413,6 +422,9 @@ window.addEventListener('mousemove',(e)=>{
 window.addEventListener('mouseup',()=>{ if(_groupDrag){ _groupDrag=null; markDirty(); } });
 let linkFrom = null; // {table, col}
 let dirty = false;
+let baselineMtime = null;         // on-disk mtime we are currently in sync with
+let conflictDismissedMtime = 0;   // suppress the banner until the file changes again
+let _conflictChecking = false;
 window.addEventListener('beforeunload',(e)=>{ if(dirty){ e.preventDefault(); e.returnValue=''; return ''; } });
 
 function uid(){ return Math.random().toString(36).slice(2,9); }
@@ -585,12 +597,13 @@ function normalize(st){
 }
 async function loadDraft(name){
   const r = await fetch('/api/drafts/'+encodeURIComponent(name));
-  if(!r.ok){ state = blankDraft(name); }
-  else state = await r.json();
+  if(!r.ok){ state = blankDraft(name); baselineMtime = null; }
+  else { state = await r.json(); baselineMtime = parseFloat(r.headers.get('X-Draft-Mtime')) || null; }
   normalize(state);
   currentTabId = state.tabs[0].id;
   _lastRenderedTabId = null;
   dirty=false;
+  conflictDismissedMtime = 0; hideConflict();
   history = { past: [], future: [], baseline: clone(state) };
   sessionBaseline = clone(state);
   render(); updateHistButtons();
@@ -617,8 +630,49 @@ async function saveDraft(){
     method:'PUT', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(state)
   });
-  if(r.ok){ markSaved(); }
+  if(r.ok){
+    const j = await r.json().catch(()=>null);
+    if(j && j.mtime) baselineMtime = j.mtime;
+    conflictDismissedMtime = 0; hideConflict();
+    markSaved();
+  }
 }
+
+// --- external-change / conflict detection ------------------------------------
+function hideConflict(){ const b=document.getElementById('conflictBar'); if(b) b.style.display='none'; }
+function showConflict(diskMtime){
+  const b=document.getElementById('conflictBar'); if(!b) return;
+  document.getElementById('conflictMsg').innerHTML = dirty
+    ? '⚠ This draft changed on disk (Claude/MCP or another window) <b>and you have unsaved edits</b> — Reload to load the new version (discards your edits) or Save to overwrite the disk copy.'
+    : '⚠ This draft changed on disk (Claude/MCP or another window) — Reload to load the new version.';
+  b.dataset.mtime = diskMtime;
+  b.style.display='flex';
+}
+async function checkConflict(){
+  if(_conflictChecking || !currentDraftName || baselineMtime==null) return;
+  _conflictChecking = true;
+  try{
+    const r = await fetch('/api/drafts/'+encodeURIComponent(currentDraftName)+'/meta');
+    if(!r.ok) return;
+    const m = await r.json();
+    if(m && m.exists && (m.mtime - baselineMtime) > 0.5 && m.mtime > conflictDismissedMtime){
+      showConflict(m.mtime);
+    }
+  }catch(e){ /* server down / offline — ignore */ }
+  finally{ _conflictChecking = false; }
+}
+setInterval(checkConflict, 4000);
+document.getElementById('conflictReload').onclick = async ()=>{
+  if(dirty && !confirm('Reload will discard your unsaved changes. Continue?')) return;
+  hideConflict(); await loadDraft(currentDraftName); setStatus('reloaded from disk');
+};
+document.getElementById('conflictOverwrite').onclick = async ()=>{
+  hideConflict(); await saveDraft(); setStatus('overwrote disk with your version');
+};
+document.getElementById('conflictDismiss').onclick = ()=>{
+  const b=document.getElementById('conflictBar');
+  conflictDismissedMtime = parseFloat(b.dataset.mtime) || 0; hideConflict();
+};
 
 function currentTab(){ return state.tabs.find(t=>t.id===currentTabId); }
 

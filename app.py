@@ -80,7 +80,9 @@ def get_draft(name):
     p = draft_path(name)
     if not p.exists():
         abort(404)
-    return jsonify(json.loads(p.read_text()))
+    resp = jsonify(json.loads(p.read_text()))
+    resp.headers["X-Draft-Mtime"] = str(p.stat().st_mtime)
+    return resp
 
 
 @app.route("/api/drafts/<name>", methods=["PUT"])
@@ -92,7 +94,17 @@ def save_draft(name):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy2(p, backups_dir() / f"{p.stem}__{ts}.json")
     p.write_text(json.dumps(data, indent=2))
-    return jsonify({"ok": True, "name": p.stem})
+    st = p.stat()
+    return jsonify({"ok": True, "name": p.stem, "mtime": st.st_mtime})
+
+
+@app.route("/api/drafts/<name>/meta", methods=["GET"])
+def draft_meta(name):
+    p = draft_path(name)
+    if not p.exists():
+        return jsonify({"exists": False})
+    st = p.stat()
+    return jsonify({"exists": True, "mtime": st.st_mtime, "size": st.st_size})
 
 
 @app.route("/api/drafts/<name>", methods=["DELETE"])
