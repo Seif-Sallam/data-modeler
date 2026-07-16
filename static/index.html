@@ -714,7 +714,7 @@ function renderNote(n){
   el.className='note'+(n.collapsed?' collapsed':'');
   el.dataset.id = n.id;
   el.style.left=n.x+'px'; el.style.top=n.y+'px';
-  if(n.w) el.style.width = n.w+'px';
+  el.style.width = (n.w || 260)+'px';
   if(n.h && !n.collapsed) el.style.height = n.h+'px';
   if(n.collapsed && n.wMin) el.style.width = n.wMin+'px';
   if(n.collapsed && n.hMin) el.style.height = n.hMin+'px';
@@ -744,27 +744,38 @@ function renderNote(n){
   h.appendChild(dl);
   el.appendChild(h);
   const ta = document.createElement('textarea'); ta.value=n.text||''; ta.placeholder='Type a note... (markdown supported)';
-  ta.oninput=()=>{ n.text=ta.value; markDirty(); const pv=el.querySelector('.note-preview'); if(pv) pv.innerHTML = mdToHtml(ta.value); };
+  // Grow the note to fit its content unless it was manually resized or collapsed.
+  const autogrow = ()=>{
+    if(n.collapsed || n.h) return;
+    ta.style.flex='0 0 auto'; ta.style.height='auto';
+    ta.style.height=Math.max(40, ta.scrollHeight)+'px';
+  };
+  ta.oninput=()=>{ n.text=ta.value; markDirty(); autogrow(); const pv=el.querySelector('.note-preview'); if(pv) pv.innerHTML = mdToHtml(ta.value); };
   el.appendChild(ta);
   const pv = document.createElement('div'); pv.className='note-preview'; pv.innerHTML = mdToHtml(n.text||'');
   el.appendChild(pv);
+  requestAnimationFrame(autogrow);
   // resize handle (works both minimized and expanded)
   const rh = document.createElement('div'); rh.className='resize-handle'; rh.title='Drag to resize';
   el.appendChild(rh);
-  let rz=null;
   rh.addEventListener('mousedown',(e)=>{
     e.stopPropagation(); e.preventDefault();
     const r = el.getBoundingClientRect();
-    rz = { x:e.clientX, y:e.clientY, w:r.width/zoom, h:r.height/zoom };
+    const startX=e.clientX, startY=e.clientY, startW=r.width/zoom, startH=r.height/zoom;
+    const onMove=(ev)=>{
+      const nw = Math.max(160, startW + (ev.clientX-startX)/zoom);
+      const nh = Math.max(60, startH + (ev.clientY-startY)/zoom);
+      el.style.width = nw+'px'; el.style.height = nh+'px';
+      if(n.collapsed){ n.wMin = nw; n.hMin = nh; } else { n.w = nw; n.h = nh; }
+    };
+    const onUp=()=>{
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      markDirty();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   });
-  window.addEventListener('mousemove',(e)=>{
-    if(!rz) return;
-    const nw = Math.max(160, rz.w + (e.clientX-rz.x)/zoom);
-    const nh = Math.max(60, rz.h + (e.clientY-rz.y)/zoom);
-    el.style.width = nw+'px'; el.style.height = nh+'px';
-    if(n.collapsed){ n.wMin = nw; n.hMin = nh; } else { n.w = nw; n.h = nh; }
-  });
-  window.addEventListener('mouseup',()=>{ if(rz){ rz=null; markDirty(); } });
   // drag
   h.addEventListener('mousedown',(e)=>{
     if(e.target.tagName==='BUTTON'||e.target.tagName==='INPUT') return;
@@ -1430,22 +1441,55 @@ $('#minAllBtn').onclick = ()=>{
 };
 $('#organizeBtn').onclick = ()=>{
   const tab = currentTab(); if(!tab) return;
-  const cols = Math.ceil(Math.sqrt(tab.tables.length)) || 1;
-  const colW = 340, rowH = 60;
-  // estimate per-table height by column count when expanded, fixed-ish when collapsed
-  const heights = tab.tables.map(t => t.collapsed ? (40 + (t.columns?.length||0)*20) : (180 + (t.columns?.length||0)*22 + (t.constraints?.length||0)*22));
-  // simple grid using max height per row
-  let x=60, y=60, colIx=0, rowMax=0;
-  tab.tables.forEach((t,i)=>{
-    t.x = x; t.y = y;
-    rowMax = Math.max(rowMax, heights[i]);
-    colIx++;
-    if(colIx >= cols){
-      colIx=0; x=60; y += rowMax + rowH; rowMax=0;
-    } else {
-      x += colW;
+  const notes = tab.notes || [];
+  if(!tab.tables.length && !notes.length) return;
+  const GAP = 40, ORIGIN = 60;
+  // Measure an entity's real footprint from the DOM. Tables are unioned with
+  // their visible pinned comment bubbles, which render OUTSIDE the table box
+  // (table comment above it, column comments to its right).
+  const measure = (obj, sel, withBubbles)=>{
+    const el = document.querySelector(sel+'[data-id="'+obj.id+'"]');
+    if(!el){
+      const w = obj.w || (withBubbles ? 290 : 260);
+      const h = obj.collapsed ? 44 : (withBubbles
+        ? 46 + (obj.columns?.length||0)*29 + (obj.constraints?.length||0)*22 : 120);
+      return { obj, w, h, padLeft:0, padTop:0 };
     }
-  });
+    const base = el.getBoundingClientRect();
+    let left=base.left, top=base.top, right=base.right, bottom=base.bottom;
+    if(withBubbles){
+      el.querySelectorAll('.note-bubble').forEach(b=>{
+        if(getComputedStyle(b).display==='none') return;
+        const r=b.getBoundingClientRect();
+        if(!r.width && !r.height) return;
+        left=Math.min(left,r.left); top=Math.min(top,r.top);
+        right=Math.max(right,r.right); bottom=Math.max(bottom,r.bottom);
+      });
+    }
+    return { obj,
+      w:(right-left)/zoom, h:(bottom-top)/zoom,
+      padLeft:(base.left-left)/zoom, padTop:(base.top-top)/zoom };
+  };
+  // Pack a list of boxes into rows starting at startY; return the next free y.
+  const pack = (boxes, startY)=>{
+    if(!boxes.length) return startY;
+    const avgW = boxes.reduce((s,b)=>s+b.w,0)/boxes.length;
+    const widest = Math.max(...boxes.map(b=>b.w));
+    const targetCols = Math.max(1, Math.round(Math.sqrt(boxes.length)));
+    const maxRowW = Math.max(widest, targetCols*(avgW+GAP));
+    let x=ORIGIN, y=startY, rowH=0;
+    boxes.forEach(b=>{
+      if(x>ORIGIN && x + b.w > ORIGIN + maxRowW){ x=ORIGIN; y += rowH + GAP; rowH=0; }
+      b.obj.x = x + b.padLeft;   // offset so the entity clears its bubbles
+      b.obj.y = y + b.padTop;
+      x += b.w + GAP;
+      rowH = Math.max(rowH, b.h);
+    });
+    return y + rowH + GAP;
+  };
+  // Tables first, then notes in their own band below.
+  let y = pack(tab.tables.map(t=>measure(t, '.table', true)), ORIGIN);
+  pack(notes.map(n=>measure(n, '.note', false)), y);
   markDirty(); renderCanvas();
 };
 
